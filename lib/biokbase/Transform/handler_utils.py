@@ -90,12 +90,17 @@ class TaskRunner(object):
     return code of the task.
     """
     
-    def __init__(self, logger=None):
+    def __init__(self, logger=None, callback=None):
         #logger_stdout = script_utils.getStdoutLogger()
         if logger is None:
             self.logger = script_utils.stderrlogger(__file__)
         else:
             self.logger = logger
+            
+        if callback is None:
+            self.callback = lambda x: self.logger.info(x)
+        else:
+            self.callback = callback
 
 
     def _build_command_list(self, arguments=None, debug=False):
@@ -113,18 +118,33 @@ class TaskRunner(object):
             command_name = os.path.splitext(arguments["script_name"])[0]
         
         command_list = [command_name]
-        del arguments["script_name"]
+        #del arguments["script_name"]
         #del arguments["optional_arguments"]
 
         for k in arguments:
-            command_list.append("--{0}".format(k))
-            command_list.append("{0}".format(arguments[k]))
+            if k == "script_name": continue
+            if type(arguments[k]) == type(list()):
+                for n in arguments[k]:
+                    command_list.append("--{0}".format(k))
+                    command_list.append("{0}".format(n))
+            else:            
+                command_list.append("--{0}".format(k))
+                command_list.append("{0}".format(arguments[k]))
         
         return command_list
 
 
     def run(self, arguments=None, debug=False):
-        task = subprocess.Popen(self._build_command_list(arguments,debug), stderr=subprocess.PIPE)
+        command_list = self._build_command_list(arguments,debug)
+    
+        self.logger.info("Executing {0}".format(" ".join(command_list)))
+    
+        task = subprocess.Popen(command_list, stdout=subprocess.PIPE)
+        
+        lines_iterator = iter(task.stdout.readline, b"")
+        for line in lines_iterator:
+            self.callback(line)
+
         sub_stdout, sub_stderr = task.communicate()
 
         task_output = dict()
@@ -135,7 +155,6 @@ class TaskRunner(object):
             raise Exception(task_output)
         else:
             return task_output
-
 
 
 def PluginManager(directory=None, logger=script_utils.stderrlogger(__file__)):
@@ -176,7 +195,7 @@ class PlugIns(object):
                     id = pconfig["external_type"]
                 elif pconfig["script_type"] == "upload":
                     if pconfig["external_type"] not in self.scripts_config["external_types"]:
-		                self.scripts_config["external_types"].append(pconfig["external_type"])
+                        self.scripts_config["external_types"].append(pconfig["external_type"])
                     
                     if pconfig["kbase_type"] not in self.scripts_config["kbase_types"]:
                         self.scripts_config["kbase_types"].append(pconfig["kbase_type"])
@@ -207,16 +226,13 @@ class PlugIns(object):
 
 
     def get_job_details(self, method, args):
-        if "optional_arguments" not in args:
-            args["optional_arguments"] = dict()
-
         job_details = dict()        
 
         if method == "upload":
             if self.scripts_config["validate"].has_key(args["external_type"]):
                 plugin_key = args["external_type"]
-                        
-                job_details["validate"] = self.scripts_config["validate"][plugin_key]                
+                
+                job_details["validate"] = self.scripts_config["validate"][plugin_key]
             else:
                 self.logger.warning("No validation available for {0}".format(args["external_type"]))
 
